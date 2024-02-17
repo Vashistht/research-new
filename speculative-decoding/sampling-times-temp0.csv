@@ -1,0 +1,39 @@
+Sampling Method,Max Length,K Values,Time Taken,Text Generated
+autoregressive,20,0,16.085139989852905,"In a shocking finding,  is with that-VID "" the the in the night the the night the night the night the night"
+speculative,20,3,7.0130791664123535,"In a shocking finding,  context<|endoftext|> surpassed000 the
+ beenI the new am
+ am the am the new
+I am new"
+autoregressive,50,0,35.49071502685547,"In a shocking finding,  is with that-VID "" the the in the night the the night the night the night the night the night the night the night the night the night the night the night the night the night the night the night the night the night the night the night"
+speculative,50,3,11.135869026184082,"In a shocking finding,  context<|endoftext|> surpassed000 the
+ beenI the new am
+ am the am the new
+I am new am the
+I am new am theI am the am
+I new
+I am new
+I new
+I new
+I new
+I new"
+speculative,50,18,19.41823697090149,"In a shocking finding,  context<|endoftext|> for the the on the is Man former Obama who a former US president, Obama, US president, and US president, Barack, Obama, US president, Obama,, Obama Obama,, Obama Obama,, Obama Obama,, Obama Obama"
+autoregressive,100,0,35.60082793235779,"In a shocking finding,  is with that-VID "" the the in the night the the night the night the night the night the night the night the night the night the night the night the night the night the night the night the night the night the night the night the night the night the night the night the night the night the night the night the night the night the night the night the night the night the night the night the night the night the night the night the night the night the night the night the night the night"
+speculative,100,3,20.71366596221924,"In a shocking finding,  context<|endoftext|> surpassed000 the
+ beenI the new am
+ am the am the new
+I am new am the
+I am new am theI am the am
+I new
+I am new
+I new
+I new
+I new
+I new
+I
+new
+ am the newI am theI am
+ am the newI am theI am
+ am the new am theI theI amI amI amIIIIIIIIIIIII"
+speculative,100,18,50.24502611160278,"In a shocking finding,  context<|endoftext|> for the the on the is Man former Obama who a former US president, Obama, US president, and US president, Barack, Obama, US president, Obama,, Obama Obama,, Obama Obama,, Obama Obama,, Obama Obama,, Obama Obama,, Obama Obama,, Obama Obama,, Obama Obama,, Obama Obama,, Obama Obama,, Obama Obama,, Obama Obama,, Obama Obama,, Obama Obama,, Obama Obama,, Obama Obama,,"
+speculative,100,34,49.620314836502075,"In a shocking finding,  context<|endoftext|> for the the on the is Man former Obama who a former US president Barack Obama was former US president Barack was a former US president Barack was a former US president Barack was a former US Barack was a former president Barack was a US president Barack was former US president Barack a former US president was a former US Barack was a former president Barack was a US president Barack was former US president Barack a former US president was a former US Barack was a former president Barack was a US president Barack was former"
+speculative,100,50,59.81811308860779,"In a shocking finding,  context<|endoftext|> for the the on the is Man former Obama who a former US president Barack Obama was a former US president. Obama was a former US president was a US president was a former US president a former US president was former US president was a US president was a former president was a former US was a former US president a former US president was former US president was a US president was a former president was a former US was a former US president a former US president was former US president was a US"
