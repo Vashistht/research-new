@@ -24,8 +24,14 @@ import os
 import dotenv
 
 # %%
-device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-print(device)
+if torch.backends.mps.is_available():
+    device = torch.device("mps")
+elif torch.cuda.is_available():
+    device = torch.device("cuda")  
+else:
+    device = torch.device("cpu") 
+
+print(f"Using device: {device}")
 
 # %%
 torch.manual_seed(42)
@@ -43,61 +49,61 @@ print(os.getenv('hf_api') is not None)
 # %%
 
 # (f)_+ function in the paper
-def max_fn(x): 
-    x_max = torch.where(x > 0, x, 0)
+def max_fn(x):
+    x_max = torch.where(x > 0, x, torch.tensor(0., device=device))
     x_max = x_max.float()
-    sum_ = torch.sum(x_max, dim = -1, keepdim=True) + 1e-8
-    x_max.div_( sum_)
+    sum_ = torch.sum(x_max, dim=-1, keepdim=True) + 1e-8
+    x_max.div_(sum_)
     return x_max
 
 # %%
-def get_distribution(logits, temperature, epsilon = 1e-8):
+
+def get_distribution(logits, temperature, epsilon=1e-8):
+    logits = logits.to(device)  # Move logits to the device
     logits /= (temperature + epsilon)
-    probability = F.softmax(logits, dim = -1)
+    probability = F.softmax(logits, dim=-1)
     return probability
 
 # %%
+
 def sample(logits, temperature):
     output = get_distribution(logits, temperature)
     output = torch.multinomial(output, num_samples=1)
-    return output[0]
+    return output.squeeze(1)
 
 # %%
-
 def sample_from_draft_model(model, initial_prompt_seq, new_tokens, temperature=0):
-    fin_prompt_seq = (initial_prompt_seq.detach().clone()).to(device)
+    fin_prompt_seq = initial_prompt_seq.to(device)
     out_logits = []
 
     for _ in range(new_tokens):
         sample_token_logits = model(fin_prompt_seq).logits[:, -1, :]
         sample_token = sample(sample_token_logits, temperature=temperature)
-        fin_prompt_seq = torch.concat([fin_prompt_seq, sample_token.unsqueeze(0)], dim=-1)
+        fin_prompt_seq = torch.cat([fin_prompt_seq, sample_token.unsqueeze(0)], dim=-1)
         out_logits.append(sample_token_logits)
 
     out_logits = torch.stack(out_logits, dim=1)
     return fin_prompt_seq, out_logits
-    
 
 # %%
 def autoregressive_sampling(model, initial_prompt_seq, max_new_tokens, temperature=0):
     initial_prompt_seq = initial_prompt_seq.to(device)
-    n = (initial_prompt_seq.shape[-1])
+    n = initial_prompt_seq.shape[-1]
     target_len = n + max_new_tokens
     fin_prompt_seq = initial_prompt_seq.detach().clone()
 
     while n < target_len:
         sample_token_logits = model(fin_prompt_seq).logits[:, -1, :]
         sample_token = sample(sample_token_logits, temperature=temperature)
-        sample_token_unsqueezed = sample_token.unsqueeze(0) # to add batch dim 
-        fin_prompt_seq = torch.concat([fin_prompt_seq, sample_token_unsqueezed], dim=-1)
+        sample_token_unsqueezed = sample_token.unsqueeze(0)
+        fin_prompt_seq = torch.cat([fin_prompt_seq, sample_token_unsqueezed], dim=-1)
         n += 1
     return fin_prompt_seq
 
 # %%
 def speculative_sampling(target_model, draft_model, initial_prompt_seq, max_new_tokens, tokenizer, lookahead=3, temperature=0, debug=True):
-
-    assert initial_prompt_seq.shape[0] == 1, 'Batch size should be 1'
     initial_prompt_seq = initial_prompt_seq.to(device)
+    assert initial_prompt_seq.shape[0] == 1, 'Batch size should be 1'
     n = initial_prompt_seq.shape[-1]
     target_len = n + max_new_tokens
     fin_prompt_seq = initial_prompt_seq.detach().clone()
@@ -109,30 +115,29 @@ def speculative_sampling(target_model, draft_model, initial_prompt_seq, max_new_
         n_orig = n
         N = fin_prompt_seq.shape[-1]
         draft_outputs, draft_logits = sample_from_draft_model(draft_model, fin_prompt_seq, new_tokens=lookahead, temperature=temperature)
-        
+
         if debug:
-            print(f"Possible continuations: {tokenizer.decode(draft_outputs[0,n_orig:], skip_special_tokens=True)}")
+            print(f"Possible continuations: {tokenizer.decode(draft_outputs[0, n_orig:], skip_special_tokens=True)}")
 
-        target_logits = target_model(draft_outputs).logits[:, -lookahead-1:, :]
-
+        target_logits = target_model(draft_outputs.to(device)).logits[:, -lookahead-1:, :]
         target_model_distribution = get_distribution(target_logits, temperature)
-        draft_model_distribution = get_distribution(draft_logits, temperature)
+        draft_model_distribution = get_distribution(draft_logits.to(device), temperature)
 
         accepted_flag = True
-        
+
         for t in range(lookahead):
             numerator = target_model_distribution[:, t, draft_outputs[0, N+t]]
             denominator = draft_model_distribution[:, t, draft_outputs[0, N+t]]
             ratio = (numerator / denominator)
-            r = torch.rand_like(numerator) # Uniform[0]
-            ones_tensor = torch.ones_like(numerator)
+            r = torch.rand_like(numerator, device=device)  # Uniform[0]
+            ones_tensor = torch.ones_like(numerator, device=device)
 
             # Rejection Sampling
             ## Acceptance
             if (r < torch.min(ones_tensor, ratio)).any():
-                fin_prompt_seq = torch.concat([fin_prompt_seq, draft_outputs[:, N+t].unsqueeze(dim=-1)], dim=-1)
+                fin_prompt_seq = torch.cat([fin_prompt_seq, draft_outputs[:, N+t].unsqueeze(dim=-1).to(device)], dim=-1)
                 n += 1
-                
+
                 if debug:
                     accepted_token = tokenizer.decode(draft_outputs[0, N+t])
                     print(f"Accepted token: ''{accepted_token}'' ")
@@ -142,27 +147,27 @@ def speculative_sampling(target_model, draft_model, initial_prompt_seq, max_new_
                 new_dist = (target_model_distribution[:, t, :] - draft_model_distribution[:, t, :])
                 new_dist = max_fn(new_dist)
                 token_id = torch.multinomial(new_dist, num_samples=1)[0]
-                fin_prompt_seq = torch.concat([fin_prompt_seq, token_id.unsqueeze(0) ], dim=-1)
-                
+                fin_prompt_seq = torch.cat([fin_prompt_seq, token_id.unsqueeze(0).to(device)], dim=-1)
+
                 accepted_flag = False
-                
+
                 if debug:
                     rejected_token = tokenizer.decode(draft_outputs[0, N+t])
                     new_token = tokenizer.decode(token_id)
                     print(f"Rejected token: ''{rejected_token}'', Replaced with: {new_token}")
                 break
-            
+
             # Print full sentence after every token update
         if debug:
             full_sentence = tokenizer.decode(fin_prompt_seq[0], skip_special_tokens=True)
             print(f"Full sentence: {full_sentence}")
-            
+
         if accepted_flag:
             sample_token = sample(target_logits[:, -1, :], temperature=temperature)
-            fin_prompt_seq = torch.concat([fin_prompt_seq, sample_token.unsqueeze(0) ], dim=-1)
+            fin_prompt_seq = torch.cat([fin_prompt_seq, sample_token.unsqueeze(0).to(device)], dim=-1)
 
         if debug:
-            print(f"Accepted continuations: {tokenizer.decode(fin_prompt_seq[0,n_orig:], skip_special_tokens=True)}")
+            print(f"Accepted continuations: {tokenizer.decode(fin_prompt_seq[0, n_orig:], skip_special_tokens=True)}")
 
         n += 1
 
@@ -181,7 +186,7 @@ draft_generator = pipeline('text-generation', model=draft_model, tokenizer=draft
 
 # %%
 # target_tokenizer = draft_tokenizer
-# target_model = draft_model
+# target_model = draft_model.to(device)
 # tokenizer = draft_tokenizer
 
 # %%
@@ -191,7 +196,7 @@ target_generator = pipeline('text-generation', model=target_model, tokenizer=tar
 tokenizer = target_tokenizer
 
 # %%
-question = 'Tell me about Carnegie Mellon University'
+question = 'the quick brown fox'
 
 # %%
 inputs = tokenizer(question, return_tensors="pt").to(device)
