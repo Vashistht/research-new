@@ -47,9 +47,8 @@ hf_api = os.getenv('hf_api')
 print(os.getenv('hf_api') is not None)
 
 # %%
-
-# (f)_+ function in the paper
 def max_fn(x):
+    x = x.to(device)  # Ensure x is on the correct device
     x_max = torch.where(x > 0, x, torch.tensor(0., device=device))
     x_max = x_max.float()
     sum_ = torch.sum(x_max, dim=-1, keepdim=True) + 1e-8
@@ -57,15 +56,13 @@ def max_fn(x):
     return x_max
 
 # %%
-
 def get_distribution(logits, temperature, epsilon=1e-8):
     logits = logits.to(device)  # Move logits to the device
     logits /= (temperature + epsilon)
     probability = F.softmax(logits, dim=-1)
-    return probability
+    return probability.to(device)
 
 # %%
-
 def sample(logits, temperature):
     output = get_distribution(logits, temperature)
     output = torch.multinomial(output, num_samples=1)
@@ -102,6 +99,8 @@ def autoregressive_sampling(model, initial_prompt_seq, max_new_tokens, temperatu
 
 # %%
 def speculative_sampling(target_model, draft_model, initial_prompt_seq, max_new_tokens, tokenizer, lookahead=3, temperature=0, debug=True):
+    
+    print(f"Initial device: {initial_prompt_seq.device}")  # Check initial device
     initial_prompt_seq = initial_prompt_seq.to(device)
     assert initial_prompt_seq.shape[0] == 1, 'Batch size should be 1'
     n = initial_prompt_seq.shape[-1]
@@ -114,40 +113,59 @@ def speculative_sampling(target_model, draft_model, initial_prompt_seq, max_new_
             print('n: ', n)
         n_orig = n
         N = fin_prompt_seq.shape[-1]
+        draft_model = draft_model.to(device)
         draft_outputs, draft_logits = sample_from_draft_model(draft_model, fin_prompt_seq, new_tokens=lookahead, temperature=temperature)
+        
+        # print(f"draft_outputs device after sample_from_draft_model: {draft_outputs.device}")  # Check device after sampling
 
         if debug:
             print(f"Possible continuations: {tokenizer.decode(draft_outputs[0, n_orig:], skip_special_tokens=True)}")
 
-        target_logits = target_model(draft_outputs.to(device)).logits[:, -lookahead-1:, :]
-        target_model_distribution = get_distribution(target_logits, temperature)
-        draft_model_distribution = get_distribution(draft_logits.to(device), temperature)
+        draft_outputs = draft_outputs.to(device)
+        # print(f"draft_outputs device before target_model: {draft_outputs.device}")  # Check device before passing to target_model
+        
+        # print('draft:', draft_outputs.device)
+        
+        # for param in target_model.parameters():
+        #     print('target params', param.device)
+        #     assert param.device == torch.device(device), "Model's parameter not on the correct device"
+        target_model = target_model.to(device)
+        
+        target_logits = target_model(draft_outputs).logits[:, -lookahead-1:, :]
+        # print(f"target_logits device: {target_logits.device}")  # Check device of target_logits
+
+        target_model_distribution = get_distribution(target_logits, temperature).to(device)
+        
+        draft_model_distribution = get_distribution(draft_logits, temperature).to(device)
+        
+        # print(f"target_model_distribution device: {target_model_distribution.device}")  # Check device
+        # print(f"draft_model_distribution device: {draft_model_distribution.device}")  # Check device
 
         accepted_flag = True
 
         for t in range(lookahead):
-            numerator = target_model_distribution[:, t, draft_outputs[0, N+t]]
-            denominator = draft_model_distribution[:, t, draft_outputs[0, N+t]]
-            ratio = (numerator / denominator)
-            r = torch.rand_like(numerator, device=device)  # Uniform[0]
-            ones_tensor = torch.ones_like(numerator, device=device)
+            numerator = target_model_distribution[:, t, draft_outputs[0, N+t]].to(device)
+            denominator = draft_model_distribution[:, t, draft_outputs[0, N+t]].to(device)
+            # print(f"Numerator and Denominator devices: {numerator.device}, {denominator.device}")  # Check devices
 
-            # Rejection Sampling
-            ## Acceptance
+            ratio = (numerator / denominator)
+            r = torch.rand_like(numerator, device = device)  # r inherits device from numerator
+            ones_tensor = torch.ones_like(numerator)  # ones_tensor inherits device from numerator
+            # No need to check r and ones_tensor devices since they inherit from numerator
+
             if (r < torch.min(ones_tensor, ratio)).any():
-                fin_prompt_seq = torch.cat([fin_prompt_seq, draft_outputs[:, N+t].unsqueeze(dim=-1).to(device)], dim=-1)
+                fin_prompt_seq = torch.cat([fin_prompt_seq, draft_outputs[:, N+t].unsqueeze(dim=-1)], dim=-1)
                 n += 1
 
                 if debug:
                     accepted_token = tokenizer.decode(draft_outputs[0, N+t])
                     print(f"Accepted token: ''{accepted_token}'' ")
 
-            ## Rejection
             else:
                 new_dist = (target_model_distribution[:, t, :] - draft_model_distribution[:, t, :])
-                new_dist = max_fn(new_dist)
+                new_dist = max_fn(new_dist).to(device)
                 token_id = torch.multinomial(new_dist, num_samples=1)[0]
-                fin_prompt_seq = torch.cat([fin_prompt_seq, token_id.unsqueeze(0).to(device)], dim=-1)
+                fin_prompt_seq = torch.cat([fin_prompt_seq, token_id.unsqueeze(0)], dim=-1)
 
                 accepted_flag = False
 
@@ -155,16 +173,14 @@ def speculative_sampling(target_model, draft_model, initial_prompt_seq, max_new_
                     rejected_token = tokenizer.decode(draft_outputs[0, N+t])
                     new_token = tokenizer.decode(token_id)
                     print(f"Rejected token: ''{rejected_token}'', Replaced with: {new_token}")
-                break
 
-            # Print full sentence after every token update
-        if debug:
-            full_sentence = tokenizer.decode(fin_prompt_seq[0], skip_special_tokens=True)
-            print(f"Full sentence: {full_sentence}")
+            if debug:
+                full_sentence = tokenizer.decode(fin_prompt_seq[0], skip_special_tokens=True)
+                print(f"Full sentence: {full_sentence}")
 
         if accepted_flag:
-            sample_token = sample(target_logits[:, -1, :], temperature=temperature)
-            fin_prompt_seq = torch.cat([fin_prompt_seq, sample_token.unsqueeze(0).to(device)], dim=-1)
+            sample_token = sample(target_logits[:, -1, :], temperature=temperature).to(device)
+            fin_prompt_seq = torch.cat([fin_prompt_seq, sample_token.unsqueeze(0)], dim=-1)
 
         if debug:
             print(f"Accepted continuations: {tokenizer.decode(fin_prompt_seq[0, n_orig:], skip_special_tokens=True)}")
@@ -180,23 +196,26 @@ def speculative_sampling(target_model, draft_model, initial_prompt_seq, max_new_
 # - GPT-xl: 1.5B
 
 # %%
-draft_tokenizer = AutoTokenizer.from_pretrained("gpt2") # 124M
-draft_model = AutoModelForCausalLM.from_pretrained("gpt2").to(device) # 124M
+# Model setup
+draft_tokenizer = AutoTokenizer.from_pretrained("gpt2")  # 124M
+draft_model = AutoModelForCausalLM.from_pretrained("gpt2").to(device)  # 124M
 draft_generator = pipeline('text-generation', model=draft_model, tokenizer=draft_tokenizer)
 
 # %%
-# target_tokenizer = draft_tokenizer
-# target_model = draft_model.to(device)
-# tokenizer = draft_tokenizer
+# target_tokenizer = AutoTokenizer.from_pretrained("gpt2")  # 2* 774M parameter
+# target_model = AutoModelForCausalLM.from_pretrained("gpt2").to(device)  # 2* 774M parameter
+# target_generator = pipeline('text-generation', model=target_model, tokenizer=target_tokenizer)
+# tokenizer = target_tokenizer
 
 # %%
-target_tokenizer = AutoTokenizer.from_pretrained("gpt2-xl") # 2* 774M parameter
-target_model = AutoModelForCausalLM.from_pretrained("gpt2-xl").to(device)  #2* 774M parameter
+target_tokenizer = AutoTokenizer.from_pretrained("gpt2-xl")  # 2* 774M parameter
+target_model = AutoModelForCausalLM.from_pretrained("gpt2-xl").to(device)  # 2* 774M parameter
+target_model = target_model.to(device)
 target_generator = pipeline('text-generation', model=target_model, tokenizer=target_tokenizer)
 tokenizer = target_tokenizer
 
 # %%
-question = 'the quick brown fox'
+question = 'The history of the United States of America is'
 
 # %%
 inputs = tokenizer(question, return_tensors="pt").to(device)
@@ -211,7 +230,6 @@ print(tokenizer.decode(tokens[0]))
 
 # %%
 tokens = autoregressive_sampling(target_model, initial_prompt_seq=inputs.input_ids, max_new_tokens=11, temperature=0.)
-
 new_tokens = len(tokens[0]) - len(inputs.input_ids[0])
 print(new_tokens)
 print(tokenizer.decode(tokens[0]))
@@ -257,7 +275,7 @@ def sampling_test(prompt:str, tokenizer, sampling:str, target_model, draft_model
 # %%
 prompt = 'United States in the year 2025'
 temperature = 0
-max_lengths = [16, 32, 128]  # example max_lengths
+max_lengths = [16, 64, 256]  # example max_lengths
 lookahead_ks = [1, 2, 3, 4, 5, 7, 8]  # exaample lookahead_ks
 
 # Store the results
@@ -288,7 +306,6 @@ max_lengths_sorted = sorted(df['Max Length'].unique())
 lookahead_ks = sorted(df[df['Sampling Method'] == 'speculative']['K Values'].unique())
 ind = np.arange(len(max_lengths_sorted))
 bar_width = 0.1
-
 
 
 # Adjust the plot aesthetics as per the user's request
@@ -359,8 +376,8 @@ for max_length in max_lengths_sorted:
     plt.ylabel('Time Taken (m seconds)')
     plt.title(f'Time Taken for K Values for max-length = {max_length} (temp = {temperature})')
     plt.legend()
+    plt.savefig(f'time-taken-max-length-{max_length}.png')
     plt.show()
-
 
 # %%
 
