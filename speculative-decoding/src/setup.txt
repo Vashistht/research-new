@@ -5,3 +5,4 @@ accelerate
 numpy
 pandas
 auto-gptq
+optimum
