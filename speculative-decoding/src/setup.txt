@@ -3,4 +3,5 @@ tqdm
 transformers
 accelerate
 numpy
-pandas 
+pandas
+auto-gptq
