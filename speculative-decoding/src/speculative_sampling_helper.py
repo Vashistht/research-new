@@ -24,14 +24,14 @@ import os
 import dotenv
 
 # %%
-if torch.backends.mps.is_available():
-    device = torch.device("mps")
-elif torch.cuda.is_available():
-    device = torch.device("cuda")  
-else:
-    device = torch.device("cpu") 
+# if torch.backends.mps.is_available():
+#     device = torch.device("mps")
+# elif torch.cuda.is_available():
+#     device = torch.device("cuda")  
+# else:
+#     device = torch.device("cpu") 
 
-print(f"Using device: {device}")
+# print(f"Using device: {device}")
 
 # %%
 torch.manual_seed(42)
@@ -151,7 +151,7 @@ def speculative_sampling(target_model, draft_model, initial_prompt_seq, max_new_
             # print(f"Numerator and Denominator devices: {numerator.device}, {denominator.device}")  # Check devices
 
             ratio = (numerator / denominator)
-            r = torch.rand_like(numerator, device = device)  # r inherits device from numerator
+            r = torch.rand_like(numerator)  # r inherits device from numerator
             ones_tensor = torch.ones_like(numerator)  # ones_tensor inherits device from numerator
             # No need to check r and ones_tensor devices since they inherit from numerator
 
