@@ -1,0 +1,11 @@
+{
+    "bits": 4,
+    "group_size": 128,
+    "damp_percent": 0.01,
+    "desc_act": true,
+    "static_groups": false,
+    "sym": true,
+    "true_sequential": true,
+    "model_name_or_path": "zoo/zhenyu/llama2/wanda_2_4_gptq_4bit",
+    "model_file_base_name": "gptq_model-4bit-128g"
+  }
