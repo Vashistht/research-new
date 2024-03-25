@@ -1,0 +1,3 @@
+[submodule "Sequoia"]
+	path = Sequoia
+	url = https://github.com/Infini-AI-Lab/Sequoia.git
